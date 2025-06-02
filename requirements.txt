@@ -1,0 +1,23 @@
+# Core data science
+pandas>=1.5.0
+numpy>=1.24.0
+matplotlib>=3.6.0
+seaborn>=0.12.0
+jupyter>=1.0.0
+plotly>=5.0.0
+
+# Machine Learning
+scikit-learn>=1.3.0
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.30.0
+
+# LLM and AI
+openai>=1.0.0
+langchain>=0.1.0
+langchain-openai>=0.1.0
+
+# Utilities
+python-dotenv>=1.0.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
