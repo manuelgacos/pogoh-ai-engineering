@@ -55,4 +55,6 @@ pogoh-ai-engineering/
 This is a personal learning project, but feedback and suggestions are welcome.
 
 ## Contact
-Pittsburgh AI Engineering Student - Building the future of urban mobility with AI
+mag385@pitt.edu
+University of Pittsburgh PhD Candidate 
+Interested in biking and urban mobility, using open datasets to build some AI projects
