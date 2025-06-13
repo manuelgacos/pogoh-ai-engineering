@@ -1,6 +1,7 @@
 import pandas as pd
 import string
 
+
 def clean_station_text(series: pd.Series) -> pd.Series:
     """Cleans a column of string, assumed to be locations of POGOH stations, 
     and returns a cleaned version of the column.
@@ -37,6 +38,8 @@ def clean_station_text(series: pd.Series) -> pd.Series:
     # Remove punctuation symbols in the strings
     # NOTE: If done earlier, might erase symbols like & form the names
     series = series.str.translate(str.maketrans("","",string.punctuation))
+    # Making sure that no extra spaces were introduced
+    series = series.str.replace(r"\s+", " ", regex=True).str.strip()
 
     return series
 
@@ -59,6 +62,19 @@ def clean_station_names(df: pd.DataFrame, col_name="start_station_name") -> pd.D
         The input DataFrame with the new cleaned column.
     """
 
+    df = df.copy()
     df[f"{col_name}_clean"] = clean_station_text(df[col_name])
+
+    return df
+
+
+def clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = (
+        df.columns.str.strip()  # remove leading/trailing spaces
+                  .str.lower()  # convert to lowercase
+                  .str.replace(r"[ \-\.]", "_", regex=True) # replace spaces and symbols with underscores
+                  .str.replace(r"__+", "_", regex=True)
+    )
 
     return df
