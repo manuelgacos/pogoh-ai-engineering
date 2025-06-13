@@ -44,14 +44,15 @@ def clean_station_text(series: pd.Series) -> pd.Series:
     return series
 
 
-def clean_station_names(df: pd.DataFrame, col_name="start_station_name") -> pd.DataFrame:
+def clean_station_names(df: pd.DataFrame,
+                        col_name="start_station_name") -> pd.DataFrame:
     """Cleans and standardizes station name columns in a POGOH dataset.
     Adds a new column: '{col_name}_clean'.
 
     Parameters
     ----------
     df : pd.DataFrame
-        A dataset from the POGOH database where the 'col_name' column 
+        A dataset from the POGOH database where the 'col_name' column
         includes station names.
     col_name : str, optional
         The name of the column to be cleaned, by default "start_station_name"
@@ -69,11 +70,25 @@ def clean_station_names(df: pd.DataFrame, col_name="start_station_name") -> pd.D
 
 
 def clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    """Cleans the name of the columns of the dataset, erasing leading/trailing
+    spaces, converting strings to lowercase and replacing symbols with
+    underscores.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        A dataset from the POGOH database.
+
+    Returns
+    -------
+    pd.DataFrame
+        A dataset with the column names in a standard format.
+    """
     df = df.copy()
     df.columns = (
         df.columns.str.strip()  # remove leading/trailing spaces
                   .str.lower()  # convert to lowercase
-                  .str.replace(r"[ \-\.]", "_", regex=True) # replace spaces and symbols with underscores
+                  .str.replace(r"[ \-\.]", "_", regex=True)  # replace spaces/symbols with underscores
                   .str.replace(r"__+", "_", regex=True)
     )
 
