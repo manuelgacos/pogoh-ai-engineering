@@ -317,3 +317,118 @@ def print_station_consistency_summary(result: dict) -> None:
         print(f"- {len(issues['start_only_pairs'])} ID-name pairs appear only in START")
         print(f"- {len(issues['end_only_pairs'])} ID-name pairs appear only in END")
         print("\nPlease inspect the 'issues' dictionary for more details.")
+
+
+def check_duration_mismatch(
+    df: pd.DataFrame,
+    start_col: str = "start_date",
+    end_col: str = "end_date",
+    duration_col: str = "duration",
+    tolerance_sec: float = 1.0
+) -> pd.DataFrame:
+    """Checks whether the 'duration' column matches the computed duration 
+    from timestamps. Always prints a message summarizing the result.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame
+    start_col : str, optional
+        Name of start datetime column, by default "start_date"
+    end_col : str, optional
+        Name of end datetime column, by default "end_date"
+    duration_col : str, optional
+        Name of existing duration column (in seconds), by default "duration"
+    tolerance_sec : float, optional
+        Allowed absolute difference (in seconds), by default 1.0
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with missmatching information
+    """
+    df = df.copy()
+    df[start_col] = pd.to_datetime(df[start_col], errors="coerce")
+    df[end_col] = pd.to_datetime(df[end_col], errors="coerce")
+
+    df["computed_duration"] = (df[end_col] - df[start_col]).dt.total_seconds()
+    mismatch = (df[duration_col] - df["computed_duration"]).abs() > tolerance_sec
+    num_mismatches = mismatch.sum()
+
+    if num_mismatches == 0:
+        print("No duration mismatches found.")
+    else:
+        print(f"Duration mismatch found in {num_mismatches} row(s).")
+
+    return df[mismatch].reset_index(drop=True)
+
+
+def _check_negative_or_zero_duration(
+    df: pd.DataFrame,
+    duration_col: str = "duration"
+) -> pd.Series:
+    """Checks for rows with zero or negative duration values.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The input DataFrame.
+    duration_col : str, optional
+        Name of the column representing trip duration (in seconds),
+        by default "duration"
+
+    Returns
+    -------
+    pd.Series
+        Boolean Series indicating rows with non-positive durations.
+    """
+    return df[duration_col] <= 0
+
+
+def _check_unrealistic_duration(
+    df: pd.DataFrame,
+    duration_col: str = "duration",
+    max_seconds: int = 86400
+) -> pd.Series:
+    """Checks for rows with particularly long durations, threshold can be
+    set by the user. The default limit is 86400 seconds or 1 day.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The input DataFrame.
+    duration_col : str, optional
+        Name of the duration column (in seconds), by default "duration"
+    max_seconds : int, optional
+        Maximum allowable duration in seconds, by default 86400
+
+    Returns
+    -------
+    pd.Series
+        Boolean Series indicating rows with overly long durations.
+    """
+    return df[duration_col] > max_seconds
+
+
+def _check_missing_timestamps(
+    df: pd.DataFrame,
+    start_col: str = "start_date",
+    end_col: str = "end_date"
+) -> pd.Series:
+    """Checks for rows with missing start or end timestamps.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The input DataFrame.
+    start_col : str, optional
+        Name of the start timestamp column, by default "start_date"
+    end_col : str, optional
+        Name of the end timestamp column, by default "end_date"
+
+    Returns
+    -------
+    pd.Series
+        Boolean Series indicating rows with missing timestamps.
+    """
+    return df[start_col].isna() | df[end_col].isna()
