@@ -319,50 +319,6 @@ def print_station_consistency_summary(result: dict) -> None:
         print("\nPlease inspect the 'issues' dictionary for more details.")
 
 
-def check_duration_mismatch(
-    df: pd.DataFrame,
-    start_col: str = "start_date",
-    end_col: str = "end_date",
-    duration_col: str = "duration",
-    tolerance_sec: float = 1.0
-) -> pd.DataFrame:
-    """Checks whether the 'duration' column matches the computed duration 
-    from timestamps. Always prints a message summarizing the result.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input DataFrame
-    start_col : str, optional
-        Name of start datetime column, by default "start_date"
-    end_col : str, optional
-        Name of end datetime column, by default "end_date"
-    duration_col : str, optional
-        Name of existing duration column (in seconds), by default "duration"
-    tolerance_sec : float, optional
-        Allowed absolute difference (in seconds), by default 1.0
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with missmatching information
-    """
-    df = df.copy()
-    df[start_col] = pd.to_datetime(df[start_col], errors="coerce")
-    df[end_col] = pd.to_datetime(df[end_col], errors="coerce")
-
-    df["computed_duration"] = (df[end_col] - df[start_col]).dt.total_seconds()
-    mismatch = (df[duration_col] - df["computed_duration"]).abs() > tolerance_sec
-    num_mismatches = mismatch.sum()
-
-    if num_mismatches == 0:
-        print("No duration mismatches found.")
-    else:
-        print(f"Duration mismatch found in {num_mismatches} row(s).")
-
-    return df[mismatch].reset_index(drop=True)
-
-
 def _check_negative_or_zero_duration(
     df: pd.DataFrame,
     duration_col: str = "duration"
@@ -432,3 +388,271 @@ def _check_missing_timestamps(
         Boolean Series indicating rows with missing timestamps.
     """
     return df[start_col].isna() | df[end_col].isna()
+
+
+def _check_start_after_end(
+    df: pd.DataFrame,
+    start_col: str = "start_date",
+    end_col: str = "end_date"
+) -> pd.Series:
+    """Checks for rows where the start time is after the end time.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The input DataFrame.
+    start_col : str, optional
+        Name of the start timestamp column, by default "start_date"
+    end_col : str, optional
+        Name of the end timestamp column, by default "end_date"
+
+    Returns
+    -------
+    pd.Series
+        Boolean Series indicating rows where start is after end.
+    """
+    start = pd.to_datetime(df[start_col], errors="coerce")
+    end = pd.to_datetime(df[end_col], errors="coerce")
+    return start > end
+
+
+def _check_datetime_out_of_range(
+    df: pd.DataFrame,
+    start_col: str = "start_date",
+    end_col: str = "end_date",
+    min_year: int = 2020,
+    max_year: int = 2025,
+    min_month: int = 1,
+    max_month: int = 12
+) -> pd.Series:
+    """Checks whether start or end timestamps fall outside of the allowed year
+    and month range. Months are labeled as integers 1-12, 1 = January and
+    12 = December.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The input DataFrame.
+    start_col : str, optional
+        Name of the start timestamp column, by default "start_date"
+    end_col : str, optional
+        Name of the end timestamp column, by default "end_date"
+    min_year : int, optional
+        Minimum allowed year (inclusive), by default 2020
+    max_year : int, optional
+        _description_, by default 2025
+    min_month : int, optional
+        Minimum allowed month (1 = January), by default 1
+    max_month : int, optional
+        Maximum allowed month (12 = December), by default 12
+
+    Returns
+    -------
+    pd.Series
+        Boolean Series indicating rows with start or end dates outside the
+        allowed range.
+    """
+    start = pd.to_datetime(df[start_col], errors="coerce")
+    end = pd.to_datetime(df[end_col], errors="coerce")
+
+    year_range_ok = (start.dt.year.between(min_year, max_year) &
+                     end.dt.year.between(min_year, max_year))
+    month_range_ok = (start.dt.month.between(min_month, max_month) &
+                      end.dt.month.between(min_month, max_month))
+
+    return ~(year_range_ok & month_range_ok)
+
+
+def _check_duration_mismatch(
+    df: pd.DataFrame,
+    start_col: str = "start_date",
+    end_col: str = "end_date",
+    duration_col: str = "duration",
+    tolerance_sec: float = 1.0
+) -> pd.Series:
+    """Checks for rows where the reported duration doesn't match the computed
+    duration (end - start), within a specified tolerance -in seconds.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The input DataFrame.
+    start_col : str, optional
+        Name of the start timestamp column, by default "start_date", by
+        default "start_date"
+    end_col : str, optional
+        Name of the end timestamp column, by default "end_date", by default
+        "end_date"
+    duration_col : str, optional
+        Name of the duration column (in seconds), by default "duration", by
+        default "duration"
+    tolerance_sec : float, optional
+        Allowed absolute difference in seconds between recorded and computed
+        duration, by default 1.0
+
+    Returns
+    -------
+    pd.Series
+        Boolean Series indicating mismatched durations.
+    """
+    start = pd.to_datetime(df[start_col], errors="coerce")
+    end = pd.to_datetime(df[end_col], errors="coerce")
+    computed = (end - start).dt.total_seconds()
+    return (df[duration_col] - computed).abs() > tolerance_sec
+
+
+def validate_trip_data(
+    df: pd.DataFrame,
+    start_col: str = "start_date",
+    end_col: str = "end_date",
+    duration_col: str = "duration",
+    max_duration_sec: int = 86400,
+    tolerance_sec: float = 1.0,
+    min_year: int = 2020,
+    max_year: int = 2025,
+    min_month: int = 1,
+    max_month: int = 12
+) -> dict:
+    """Runs a series of validation checks on trip data columns and returns a
+    summary of issues found.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The input DataFrame to validate.
+    start_col : str, optional
+        Name of the start timestamp column, by default "start_date"
+    end_col : str, optional
+        Name of the end timestamp column, by default "end_date"
+    duration_col : str, optional
+        Name of the trip duration column (in seconds), by default "duration"
+    max_duration_sec : int, optional
+        Maximum allowable trip duration in seconds (default is
+        86400 seconds = 1 day), by default 86400
+    tolerance_sec : float, optional
+        Tolerance when comparing computed and recorded duration (in seconds),
+        by default 1.0
+    min_year : int, optional
+        Minimum valid year for timestamps, by default 2020
+    max_year : int, optional
+        Maximum valid year for timestamps, by default 2025
+    min_month : int, optional
+        Minimum valid month for timestamps, by default 1 (January)
+    max_month : int, optional
+        Maximum valid month for timestamps, by default 12 (December)
+
+    Returns
+    -------
+    dict
+        Dictionary mapping check names to the number of rows that failed.
+    """
+    summary = {}
+
+    summary["negative_or_zero_duration"] = _check_negative_or_zero_duration(
+        df, duration_col).sum()
+    summary["unrealistic_duration"] = _check_unrealistic_duration(
+        df, duration_col, max_seconds=max_duration_sec).sum()
+    summary["missing_timestamps"] = _check_missing_timestamps(
+        df, start_col, end_col).sum()
+    summary["start_after_end"] = _check_start_after_end(
+        df, start_col, end_col).sum()
+    summary["datetime_out_of_range"] = _check_datetime_out_of_range(
+        df, start_col, end_col, min_year, max_year, min_month, max_month).sum()
+    summary["duration_mismatch"] = _check_duration_mismatch(
+        df, start_col, end_col, duration_col, tolerance_sec).sum()
+
+    return summary
+
+
+def summarize_trip_validation(summary_dict: dict) -> None:
+    """
+    Prints a plain-text summary of trip data validation results done with the
+    validate_trip_data() function.
+
+    Parameters
+    ----------
+    summary_dict : dict
+        Dictionary from validate_trip_data() mapping issue names to row counts.
+    """
+    print("Trip Data Validation Summary:")
+    print("-" * 35)
+
+    for check, count in summary_dict.items():
+        if count == 0:
+            print(f"[OK]    {check.replace('_', ' ').capitalize()}: no issues found.")
+        else:
+            print(f"[FAIL]  {check.replace('_', ' ').capitalize()}: {count} issue(s) found.")
+
+    print("-" * 35)
+
+
+def get_trip_data_issues(
+    df: pd.DataFrame,
+    start_col: str = "start_date",
+    end_col: str = "end_date",
+    duration_col: str = "duration",
+    max_duration_sec: int = 86400,
+    tolerance_sec: float = 1.0,
+    min_year: int = 2020,
+    max_year: int = 2025,
+    min_month: int = 1,
+    max_month: int = 12,
+    include_full_data: bool = True
+) -> pd.DataFrame:
+    """Returns a DataFrame of rows with validation issues, optionally
+    including the full original data alongside boolean flag columns
+    indicating failed checks.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The input DataFrame to validate.
+    start_col : str, optional
+        Name of the start timestamp column, by default "start_date"
+    end_col : str, optional
+        Name of the end timestamp column, by default "end_date"
+    duration_col : str, optional
+        Name of the trip duration column (in seconds), by default "duration"
+    max_duration_sec : int, optional
+        Maximum allowable trip duration in seconds, by default 86400
+    tolerance_sec : float, optional
+        Tolerance when comparing computed and recorded duration (in seconds),
+        by default 1.0
+    min_year : int, optional
+        Minimum valid year for timestamps, by default 2020
+    max_year : int, optional
+        Maximum valid year for timestamps, by default 2025
+    min_month : int, optional
+        Minimum valid month for timestamps, by default 1
+    max_month : int, optional
+        Maximum valid month for timestamps, by default 12
+    include_full_data : bool, optional
+        If True, return original data and flags; else return only flags and
+        index, by default True
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing only the rows with one or more validation issues.
+        Includes either the full original data or only the invalid flag
+        columns.
+    """
+    flags = pd.DataFrame(index=df.index)
+
+    flags["invalid_negative_or_zero_duration"] = _check_negative_or_zero_duration(df, duration_col)
+    flags["invalid_unrealistic_duration"] = _check_unrealistic_duration(df, duration_col, max_seconds=max_duration_sec)
+    flags["invalid_missing_timestamps"] = _check_missing_timestamps(df, start_col, end_col)
+    flags["invalid_start_after_end"] = _check_start_after_end(df, start_col, end_col)
+    flags["invalid_datetime_out_of_range"] = _check_datetime_out_of_range(df, start_col, end_col, min_year, max_year, min_month, max_month)
+    flags["invalid_duration_mismatch"] = _check_duration_mismatch(df, start_col, end_col, duration_col, tolerance_sec)
+
+    # Identify rows with at least one failure
+    rows_with_issues = flags.any(axis=1)
+
+    if include_full_data:
+        result = df.copy()
+        for col in flags.columns:
+            result[col] = flags[col]
+        return result[rows_with_issues].reset_index(drop=True)
+    else:
+        return flags[rows_with_issues].reset_index(drop=True)
