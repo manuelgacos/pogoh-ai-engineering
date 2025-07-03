@@ -651,8 +651,240 @@ def get_trip_data_issues(
 
     if include_full_data:
         result = df.copy()
+        result["original_index"] = result.index
         for col in flags.columns:
             result[col] = flags[col]
-        return result[rows_with_issues].reset_index(drop=True)
+        result = result[rows_with_issues]
     else:
-        return flags[rows_with_issues].reset_index(drop=True)
+        result = flags[rows_with_issues].copy()
+        result["original_index"] = result.index
+
+    # Reset index for usability (preserving original_index for traceability)
+    return result.reset_index(drop=True)
+
+
+def clean_trip_data(
+    df: pd.DataFrame,
+    start_col: str = "start_date",
+    end_col: str = "end_date",
+    duration_col: str = "duration",
+    fix_duration: bool = True,
+    drop_other_issues: bool = True,
+    max_duration_sec: int = 86400,
+    tolerance_sec: float = 1.0,
+    min_year: int = 2020,
+    max_year: int = 2025,
+    min_month: int = 1,
+    max_month: int = 12
+) -> pd.DataFrame:
+    """Cleans trip data by fixing or dropping rows based on validation checks.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame.
+    start_col : str, optional
+        Start timestamp column name, by default "start_date"
+    end_col : str, optional
+        End timestamp column name, by default "end_date"
+    duration_col : str, optional
+        Trip duration column name (in seconds), by default "duration"
+    fix_duration : bool, optional
+        If True, recompute duration where mismatched, by default True
+    drop_other_issues : bool, optional
+        If True, drop rows with other validation issues (negative or zero
+        duration, unrealistic duration, missing timestamps, start after end
+        date, dates out of range), by default True
+    max_duration_sec : int, optional
+        Maximum valid duration (in seconds), by default 86400
+    tolerance_sec : float, optional
+        Allowed difference between recorded and computed duration (in
+        seconds), by default 1.0
+    min_year : int, optional
+        Minimum valid year for timestamps, by default 2020
+    max_year : int, optional
+        Maximum valid year for timestamps, by default 2025
+    min_month : int, optional
+        Minimum valid month for timestamps, by default 1
+    max_month : int, optional
+        Maximum valid month for timestamps, by default 12
+
+    Returns
+    -------
+    pd.DataFrame
+        Cleaned DataFrame.
+    """
+    df_clean = df.copy()
+    df_clean["original_index"] = df_clean.index
+
+    # Compute duration mismatch mask
+    mismatch_mask = _check_duration_mismatch(
+        df_clean, start_col, end_col, duration_col, tolerance_sec
+    )
+
+    if fix_duration:
+        # Recompute where mismatched
+        start = pd.to_datetime(df_clean[start_col], errors="coerce")
+        end = pd.to_datetime(df_clean[end_col], errors="coerce")
+        new_duration = (end - start).dt.total_seconds()
+        df_clean.loc[mismatch_mask, duration_col] = new_duration[mismatch_mask]
+        print(f"Fixed duration in {mismatch_mask.sum()} row(s).")
+
+    if drop_other_issues:
+        # Build combined mask for other issues
+        mask_drop = (
+            _check_negative_or_zero_duration(df_clean, duration_col)
+            | _check_unrealistic_duration(df_clean, duration_col,
+                                          max_seconds=max_duration_sec)
+            | _check_missing_timestamps(df_clean, start_col, end_col)
+            | _check_start_after_end(df_clean, start_col, end_col)
+            | _check_datetime_out_of_range(df_clean, start_col, end_col,
+                                           min_year, max_year, min_month,
+                                           max_month)
+        )
+        n_drop = mask_drop.sum()
+        df_clean = df_clean[~mask_drop]
+        print(f"Dropped {n_drop} row(s) with unrecoverable issues.")
+
+    return df_clean.reset_index(drop=True)
+
+
+def _flag_duration_outliers(
+    df: pd.DataFrame,
+    duration_col: str = "duration",
+    min_duration_sec: int = 60,
+    max_duration_sec: int = 86400
+) -> pd.DataFrame:
+    """Adds flags for short and long duration outliers.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame.
+    duration_col : str, optional
+        Name of duration column, by default "duration"
+    min_duration_sec : int, optional
+        Minimum duration threshold, by default 60
+    max_duration_sec : int, optional
+        Maximum duration threshold, by default 86400
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with added outlier flags:
+        - is_short_duration_outlier
+        - is_long_duration_outlier
+    """
+    df["is_short_duration_outlier"] = df[duration_col] < min_duration_sec
+    df["is_long_duration_outlier"] = df[duration_col] > max_duration_sec
+    return df
+
+
+def flag_trip_outliers(
+    df: pd.DataFrame,
+    duration_col: str = "duration",
+    min_duration_sec: int = 60,
+    max_duration_sec: int = 86400
+) -> pd.DataFrame:
+    """Adds outlier flags for bikeshare trips. Currently supports:
+    - Short duration outliers
+    - Long duration outliers
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame.
+    duration_col : str, optional
+        Name of duration column in seconds, by default "duration"
+    min_duration_sec : int, optional
+        Threshold below which a trip is flagged as short duration outlier, by
+        default 60
+    max_duration_sec : int, optional
+        Threshold above which a trip is flagged as long duration outlier, by
+        default 86400
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with added outlier flags.
+    """
+    df_out = df.copy()
+
+    df_out = _flag_duration_outliers(
+        df_out,
+        duration_col=duration_col,
+        min_duration_sec=min_duration_sec,
+        max_duration_sec=max_duration_sec
+    )
+
+    # In the future, other outlier flaggers could be added here
+
+    return df_out
+
+
+def summarize_trip_outliers(df: pd.DataFrame) -> None:
+    """
+    Prints a plain-text summary of outlier flags in the DataFrame.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame returned by `flag_trip_outliers()`, containing outlier flags.
+    """
+    print("Trip Outlier Summary:")
+    print("-" * 30)
+
+    if "is_short_duration_outlier" in df.columns:
+        n_short = df["is_short_duration_outlier"].sum()
+        print(f"[{'OK' if n_short == 0 else 'FLAG'}] Short duration outliers: {n_short}")
+
+    if "is_long_duration_outlier" in df.columns:
+        n_long = df["is_long_duration_outlier"].sum()
+        print(f"[{'OK' if n_long == 0 else 'FLAG'}] Long duration outliers: {n_long}")
+
+    # Future: other outlier types
+
+    print("-" * 30)
+
+
+def add_time_features(
+    df: pd.DataFrame,
+    start_col: str = "start_date",
+    end_col: str = "end_date",
+    duration_col: str = "duration"
+) -> pd.DataFrame:
+    """Adds time-derived features to the DataFrame:
+    - trip_duration_min
+    - start_hour
+    - end_hour
+    - start_weekday
+    - is_weekend
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame.
+    start_col : str, optional
+        Column with start timestamps, by default "start_date"
+    end_col : str, optional
+        Column with end timestamps, by default "end_date"
+    duration_col : str, optional
+        Column with trip duration in seconds, by default "duration"
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with added features.
+    """
+    df_out = df.copy()
+
+    start = pd.to_datetime(df_out[start_col], errors="coerce")
+    end = pd.to_datetime(df_out[end_col], errors="coerce")
+
+    df_out["trip_duration_min"] = df_out[duration_col] / 60
+    df_out["start_hour"] = start.dt.hour
+    df_out["end_hour"] = end.dt.hour
+    df_out["start_weekday"] = start.dt.weekday
+    df_out["is_weekend"] = df_out["start_weekday"] >= 5  # 5=Saturday, 6=Sunday
+
+    return df_out
